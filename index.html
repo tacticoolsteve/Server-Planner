@@ -185,192 +185,228 @@
         <svg id="wires-layer"></svg>
     </div>
 
-    <script>
-        const canvas = document.getElementById('canvas');
-        const wiresLayer = document.getElementById('wires-layer');
-        const addBtn = document.getElementById('add-btn');
-        const clearBtn = document.getElementById('clear-btn');
+    <!-- 1. Add Firebase SDKs inside your <head> section -->
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 
-        let nodes = [];
-        let connections = [];
-        let isDraggingNode = null;
-        let isDraggingWire = null;
-        let dragOffsetX, dragOffsetY;
-        let mousePos = { x: 0, y: 0 };
+<script>
+    // 2. Paste your free Firebase Config here (from console.firebase.google.com)
+    const firebaseConfig = {
+        apiKey: "YOUR_API_KEY",
+        authDomain: "YOUR_PROJECT.firebaseapp.com",
+        databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+        projectId: "YOUR_PROJECT",
+        storageBucket: "YOUR_PROJECT.appspot.com",
+        messagingSenderId: "YOUR_SENDER_ID",
+        appId: "YOUR_APP_ID"
+    };
 
-        function createNode(x, y, id) {
-            const node = {
-                id,
-                x,
-                y,
-                title: `Task ${nodes.length + 1}`,
-                element: null
-            };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
 
-            const el = document.createElement('div');
-            el.className = 'node';
-            el.id = `node-${id}`;
-            el.style.left = x + 'px';
-            el.style.top = y + 'px';
+    const canvas = document.getElementById('canvas');
+    const wiresLayer = document.getElementById('wires-layer');
+    const addBtn = document.getElementById('add-btn');
+    const clearBtn = document.getElementById('clear-btn');
 
-            el.innerHTML = `
-                <div class="node-header">
-                    <input type="text" class="node-title" value="${node.title}">
-                    <button class="delete-node">&times;</button>
-                </div>
-                <div class="port port-in" data-type="in"></div>
-                <div class="port port-out" data-type="out"></div>
-            `;
+    let nodes = [];
+    let connections = [];
+    let isDraggingNode = null;
+    let isDraggingWire = null;
+    let dragOffsetX, dragOffsetY;
+    let mousePos = { x: 0, y: 0 };
+    let isRemoteUpdate = false; // Prevents infinite sync loops
 
-            el.onmousedown = (e) => {
-                if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.classList.contains('port')) {
-                    return;
-                }
-                
-                isDraggingNode = node;
-                dragOffsetX = e.clientX - node.x;
-                dragOffsetY = e.clientY - node.y;
-                el.style.zIndex = 100;
-            };
+    // --- SAVE TO FIREBASE ---
+    function saveToCloud() {
+        if (isRemoteUpdate) return;
+        
+        // Strip DOM elements before sending raw data to database
+        const cleanNodes = nodes.map(n => ({ id: n.id, x: n.x, y: n.y, title: n.title }));
+        
+        db.ref('planner_state').set({
+            nodes: cleanNodes,
+            connections: connections
+        });
+    }
 
-            el.querySelector('.delete-node').onclick = () => {
-                nodes = nodes.filter(n => n.id !== id);
-                connections = connections.filter(c => c.fromId !== id && c.toId !== id);
-                el.remove();
-                render();
-            };
+    // --- LOAD FROM FIREBASE REAL-TIME ---
+    db.ref('planner_state').on('value', (snapshot) => {
+        const data = snapshot.val();
+        isRemoteUpdate = true;
 
-            el.querySelector('.node-title').oninput = (e) => {
-                node.title = e.target.value;
-            };
+        // Clear local DOM nodes
+        document.querySelectorAll('.node').forEach(el => el.remove());
+        nodes = [];
+        connections = [];
 
-            node.element = el;
-            nodes.push(node);
-            canvas.appendChild(el);
-            render();
-        }
-
-        window.onmousemove = (e) => {
-            const rect = canvas.getBoundingClientRect();
-            mousePos.x = e.clientX - rect.left;
-            mousePos.y = e.clientY - rect.top;
-
-            if (isDraggingNode) {
-                isDraggingNode.x = mousePos.x - dragOffsetX;
-                isDraggingNode.y = mousePos.y - dragOffsetY;
-                isDraggingNode.element.style.left = isDraggingNode.x + 'px';
-                isDraggingNode.element.style.top = isDraggingNode.y + 'px';
-                render();
+        if (data) {
+            if (data.nodes) {
+                data.nodes.forEach(n => createNode(n.x, n.y, n.id, n.title, false));
             }
-
-            if (isDraggingWire) {
-                render();
-            }
-        };
-
-        window.onmouseup = (e) => {
-            if (isDraggingWire) {
-                const targetPort = e.target.closest('.port');
-                if (targetPort && targetPort.dataset.type === 'in') {
-                    const targetNodeId = parseInt(targetPort.closest('.node').id.split('-')[1]);
-                    const sourceNodeId = isDraggingWire.fromId;
-                    
-                    if (sourceNodeId !== targetNodeId) {
-                        connections.push({
-                            fromId: sourceNodeId,
-                            toId: targetNodeId
-                        });
-                    }
-                }
-            }
-            
-            isDraggingNode = null;
-            isDraggingWire = null;
-            render();
-        };
-
-        canvas.onmousedown = (e) => {
-            const port = e.target.closest('.port');
-            if (port && port.dataset.type === 'out') {
-                const nodeId = parseInt(port.closest('.node').id.split('-')[1]);
-                isDraggingWire = {
-                    fromId: nodeId,
-                    x: mousePos.x,
-                    y: mousePos.y
-                };
-            }
-        };
-
-        function render() {
-            wiresLayer.innerHTML = '';
-
-            connections.forEach(conn => {
-                const fromNode = nodes.find(n => n.id === conn.fromId);
-                const toNode = nodes.find(n => n.id === conn.toId);
-                if (fromNode && toNode) {
-                    drawBezier(fromNode, toNode, 'permanent-wire');
-                }
-            });
-
-            if (isDraggingWire) {
-                const fromNode = nodes.find(n => n.id === isDraggingWire.fromId);
-                const outPort = fromNode.element.querySelector('.port-out');
-                const rect = outPort.getBoundingClientRect();
-                const canvasRect = canvas.getBoundingClientRect();
-                
-                const startX = rect.left - canvasRect.left + 6;
-                const startY = rect.top - canvasRect.top + 6;
-
-                drawBezier(fromNode, {
-                    element: {
-                        querySelector: (sel) => ({
-                            getBoundingClientRect: () => ({
-                                left: mousePos.x,
-                                top: mousePos.y
-                            })
-                        })
-                    }
-                }, 'temp-wire', startX, startY);
+            if (data.connections) {
+                connections = data.connections;
             }
         }
 
-        function drawBezier(fromNode, toNode, className, startX, startY) {
-            const fromPort = fromNode.element.querySelector('.port-out').getBoundingClientRect();
-            const toPort = toNode.element.querySelector('.port-in').getBoundingClientRect();
+        renderWires();
+        isRemoteUpdate = false;
+    });
+
+    function createNode(x, y, id, title = null, shouldSave = true) {
+        const node = {
+            id,
+            x,
+            y,
+            title: title || `Task ${nodes.length + 1}`,
+            element: null
+        };
+
+        const el = document.createElement('div');
+        el.className = 'node';
+        el.id = `node-${id}`;
+        el.style.left = x + 'px';
+        el.style.top = y + 'px';
+
+        el.innerHTML = `
+            <div class="node-header">
+                <input type="text" class="node-title" value="${node.title}">
+                <button class="delete-node">&times;</button>
+            </div>
+            <div class="port port-in" data-type="in"></div>
+            <div class="port port-out" data-type="out"></div>
+        `;
+
+        el.onmousedown = (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.classList.contains('port')) return;
+            isDraggingNode = node;
+            dragOffsetX = e.clientX - node.x;
+            dragOffsetY = e.clientY - node.y;
+            el.style.zIndex = 100;
+        };
+
+        el.querySelector('.delete-node').onclick = () => {
+            nodes = nodes.filter(n => n.id !== id);
+            connections = connections.filter(c => c.fromId !== id && c.toId !== id);
+            el.remove();
+            renderWires();
+            saveToCloud();
+        };
+
+        el.querySelector('.node-title').oninput = (e) => {
+            node.title = e.target.value;
+            saveToCloud();
+        };
+
+        node.element = el;
+        nodes.push(node);
+        canvas.appendChild(el);
+        
+        if (shouldSave) saveToCloud();
+    }
+
+    window.onmousemove = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        mousePos.x = e.clientX - rect.left;
+        mousePos.y = e.clientY - rect.top;
+
+        if (isDraggingNode) {
+            isDraggingNode.x = mousePos.x - dragOffsetX;
+            isDraggingNode.y = mousePos.y - dragOffsetY;
+            isDraggingNode.element.style.left = isDraggingNode.x + 'px';
+            isDraggingNode.element.style.top = isDraggingNode.y + 'px';
+            renderWires();
+        }
+
+        if (isDraggingWire) renderWires();
+    };
+
+    window.onmouseup = (e) => {
+        if (isDraggingNode) saveToCloud();
+
+        if (isDraggingWire) {
+            const targetPort = e.target.closest('.port');
+            if (targetPort && targetPort.dataset.type === 'in') {
+                const targetNodeId = parseInt(targetPort.closest('.node').id.split('-')[1]);
+                const sourceNodeId = isDraggingWire.fromId;
+                
+                if (sourceNodeId !== targetNodeId) {
+                    connections.push({ fromId: sourceNodeId, toId: targetNodeId });
+                    saveToCloud();
+                }
+            }
+        }
+        
+        isDraggingNode = null;
+        isDraggingWire = null;
+        renderWires();
+    };
+
+    canvas.onmousedown = (e) => {
+        const port = e.target.closest('.port');
+        if (port && port.dataset.type === 'out') {
+            const nodeId = parseInt(port.closest('.node').id.split('-')[1]);
+            isDraggingWire = { fromId: nodeId, x: mousePos.x, y: mousePos.y };
+        }
+    };
+
+    function renderWires() {
+        wiresLayer.innerHTML = '';
+
+        connections.forEach(conn => {
+            const fromNode = nodes.find(n => n.id === conn.fromId);
+            const toNode = nodes.find(n => n.id === conn.toId);
+            if (fromNode && toNode) drawBezier(fromNode, toNode, 'permanent-wire');
+        });
+
+        if (isDraggingWire) {
+            const fromNode = nodes.find(n => n.id === isDraggingWire.fromId);
+            const outPort = fromNode.element.querySelector('.port-out');
+            const rect = outPort.getBoundingClientRect();
             const canvasRect = canvas.getBoundingClientRect();
-
-            const x1 = fromPort.left - canvasRect.left + 6;
-            const y1 = fromPort.top - canvasRect.top + 6;
-            const x2 = toPort.left - canvasRect.left + 6;
-            const y2 = toPort.top - canvasRect.top + 6;
-
-            const sX = startX !== undefined ? startX : x1;
-            const sY = startY !== undefined ? startY : y1;
-
-            const cp1x = sX + (x2 - sX) * 0.5;
-            const cp2x = sX + (x2 - sX) * 0.5;
-
-            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-            const d = `M ${sX} ${sY} C ${cp1x} ${sY}, ${cp2x} ${y2}, ${x2} ${y2}`;
             
-            path.setAttribute("d", d);
-            path.setAttribute("class", className);
-            wiresLayer.appendChild(path);
+            const startX = rect.left - canvasRect.left + 6;
+            const startY = rect.top - canvasRect.top + 6;
+
+            drawBezier(fromNode, {
+                element: {
+                    querySelector: () => ({ getBoundingClientRect: () => ({ left: mousePos.x, top: mousePos.y }) })
+                }
+            }, 'temp-wire', startX, startY);
         }
+    }
 
-        addBtn.onclick = () => {
-            const id = Date.now();
-            createNode(window.innerWidth / 2 - 120, window.innerHeight / 2 - 20, id);
-        };
+    function drawBezier(fromNode, toNode, className, startX, startY) {
+        const fromPort = fromNode.element.querySelector('.port-out').getBoundingClientRect();
+        const toPort = toNode.element.querySelector('.port-in').getBoundingClientRect();
+        const canvasRect = canvas.getBoundingClientRect();
 
-        clearBtn.onclick = () => {
-            nodes.forEach(n => n.element.remove());
-            nodes = [];
-            connections = [];
-            render();
-        };
+        const x1 = fromPort.left - canvasRect.left + 6;
+        const y1 = fromPort.top - canvasRect.top + 6;
+        const x2 = toPort.left - canvasRect.left + 6;
+        const y2 = toPort.top - canvasRect.top + 6;
 
-        render();
-    </script>
+        const sX = startX !== undefined ? startX : x1;
+        const sY = startY !== undefined ? startY : y1;
+
+        const cp1x = sX + (x2 - sX) * 0.5;
+        const cp2x = sX + (x2 - sX) * 0.5;
+
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", `M ${sX} ${sY} C ${cp1x} ${sY}, ${cp2x} ${y2}, ${x2} ${y2}`);
+        path.setAttribute("class", className);
+        wiresLayer.appendChild(path);
+    }
+
+    addBtn.onclick = () => createNode(window.innerWidth / 2 - 120, window.innerHeight / 2 - 20, Date.now());
+
+    clearBtn.onclick = () => {
+        nodes.forEach(n => n.element.remove());
+        nodes = [];
+        connections = [];
+        renderWires();
+        saveToCloud();
+    };
+</script>
 </body>
 </html>
