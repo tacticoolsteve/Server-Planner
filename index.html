@@ -214,44 +214,59 @@
     let isDraggingWire = null;
     let dragOffsetX, dragOffsetY;
     let mousePos = { x: 0, y: 0 };
-    let isEditingLocal = false;
+    let saveTimeout = null;
 
-    // --- SAVE TO FIREBASE ---
+    // Save state to Firebase
     function saveToCloud() {
-        isEditingLocal = true;
         const cleanNodes = nodes.map(n => ({ id: n.id, x: n.x, y: n.y, title: n.title }));
-        
         db.ref('planner_state').set({
             nodes: cleanNodes,
             connections: connections
-        }).then(() => {
-            // Re-enable external updates shortly after local push completes
-            setTimeout(() => { isEditingLocal = false; }, 200);
         });
     }
 
-    // --- LOAD FROM FIREBASE REAL-TIME ---
+    // Debounce save for typing so it doesn't slam Firebase on every single letter
+    function debouncedSave() {
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(saveToCloud, 400);
+    }
+
+    // LOAD FROM FIREBASE WITH DOM REUSE (Fixes losing cursor focus!)
     db.ref('planner_state').on('value', (snapshot) => {
-        // Skip rebuilding DOM if we are the ones who just triggered the update or typing
-        if (isEditingLocal || document.activeElement.classList.contains('node-title')) {
-            return;
-        }
+        const data = snapshot.val() || {};
+        const incomingNodes = data.nodes || [];
+        connections = data.connections || [];
 
-        const data = snapshot.val();
+        const currentIds = new Set(incomingNodes.map(n => n.id));
 
-        // Clear local DOM nodes
-        document.querySelectorAll('.node').forEach(el => el.remove());
-        nodes = [];
-        connections = [];
-
-        if (data) {
-            if (data.nodes) {
-                data.nodes.forEach(n => createNode(n.x, n.y, n.id, n.title, false));
+        // 1. Remove DOM nodes that no longer exist in cloud
+        nodes = nodes.filter(n => {
+            if (!currentIds.has(n.id)) {
+                if (n.element) n.element.remove();
+                return false;
             }
-            if (data.connections) {
-                connections = data.connections;
+            return true;
+        });
+
+        // 2. Update existing nodes or create new ones
+        incomingNodes.forEach(inc => {
+            let existing = nodes.find(n => n.id === inc.id);
+            if (existing) {
+                existing.x = inc.x;
+                existing.y = inc.y;
+                existing.element.style.left = inc.x + 'px';
+                existing.element.style.top = inc.y + 'px';
+                
+                // Only update title text if user is NOT currently typing in it
+                const input = existing.element.querySelector('.node-title');
+                if (document.activeElement !== input) {
+                    existing.title = inc.title;
+                    input.value = inc.title;
+                }
+            } else {
+                createNode(inc.x, inc.y, inc.id, inc.title, false);
             }
-        }
+        });
 
         renderWires();
     });
@@ -296,8 +311,17 @@
             saveToCloud();
         };
 
-        el.querySelector('.node-title').oninput = (e) => {
+        const titleInput = el.querySelector('.node-title');
+        
+        // Update local object & schedule debounced save while typing
+        titleInput.oninput = (e) => {
             node.title = e.target.value;
+            debouncedSave();
+        };
+
+        // Save immediately when user clicks out or hits Enter
+        titleInput.onchange = () => {
+            clearTimeout(saveTimeout);
             saveToCloud();
         };
 
