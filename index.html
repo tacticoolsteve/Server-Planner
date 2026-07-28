@@ -84,7 +84,7 @@
         .node {
             position: absolute;
             width: 240px;
-            background: transparent; /* Removed background & border wrapper */
+            background: transparent;
             border: none;
             border-radius: 8px;
             padding: 0;
@@ -185,23 +185,20 @@
         <svg id="wires-layer"></svg>
     </div>
 
-    <!-- 1. Add Firebase SDKs inside your <head> section -->
-<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 
 <script>
-    // 2. Paste your free Firebase Config here (from console.firebase.google.com)
     const firebaseConfig = {
-  apiKey: "AIzaSyAoWuCRGVK-BfvHqcFrEdXGInhHccJjV2M",
-  authDomain: "server-planner.firebaseapp.com",
-  databaseURL: "https://server-planner-default-rtdb.firebaseio.com",
-  projectId: "server-planner",
-  storageBucket: "server-planner.firebasestorage.app",
-  messagingSenderId: "27100250455",
-  appId: "1:27100250455:web:ea1211307596e662e63e12",
-  measurementId: "G-FLPBQMX11N"
-};
-
+      apiKey: "AIzaSyAoWuCRGVK-BfvHqcFrEdXGInhHccJjV2M",
+      authDomain: "server-planner.firebaseapp.com",
+      databaseURL: "https://server-planner-default-rtdb.firebaseio.com",
+      projectId: "server-planner",
+      storageBucket: "server-planner.firebasestorage.app",
+      messagingSenderId: "27100250455",
+      appId: "1:27100250455:web:ea1211307596e662e63e12",
+      measurementId: "G-FLPBQMX11N"
+    };
 
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
@@ -217,25 +214,30 @@
     let isDraggingWire = null;
     let dragOffsetX, dragOffsetY;
     let mousePos = { x: 0, y: 0 };
-    let isRemoteUpdate = false; // Prevents infinite sync loops
+    let isEditingLocal = false;
 
     // --- SAVE TO FIREBASE ---
     function saveToCloud() {
-        if (isRemoteUpdate) return;
-        
-        // Strip DOM elements before sending raw data to database
+        isEditingLocal = true;
         const cleanNodes = nodes.map(n => ({ id: n.id, x: n.x, y: n.y, title: n.title }));
         
         db.ref('planner_state').set({
             nodes: cleanNodes,
             connections: connections
+        }).then(() => {
+            // Re-enable external updates shortly after local push completes
+            setTimeout(() => { isEditingLocal = false; }, 200);
         });
     }
 
     // --- LOAD FROM FIREBASE REAL-TIME ---
     db.ref('planner_state').on('value', (snapshot) => {
+        // Skip rebuilding DOM if we are the ones who just triggered the update or typing
+        if (isEditingLocal || document.activeElement.classList.contains('node-title')) {
+            return;
+        }
+
         const data = snapshot.val();
-        isRemoteUpdate = true;
 
         // Clear local DOM nodes
         document.querySelectorAll('.node').forEach(el => el.remove());
@@ -252,7 +254,6 @@
         }
 
         renderWires();
-        isRemoteUpdate = false;
     });
 
     function createNode(x, y, id, title = null, shouldSave = true) {
