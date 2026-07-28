@@ -192,14 +192,15 @@
 <script>
     // 2. Paste your free Firebase Config here (from console.firebase.google.com)
     const firebaseConfig = {
-        apiKey: "YOUR_API_KEY",
-        authDomain: "YOUR_PROJECT.firebaseapp.com",
-        databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
-        projectId: "YOUR_PROJECT",
-        storageBucket: "YOUR_PROJECT.appspot.com",
-        messagingSenderId: "YOUR_SENDER_ID",
-        appId: "YOUR_APP_ID"
-    };
+    apiKey: "YOUR_API_KEY", // Retrieve this from your Firebase Console
+    authDomain: "server-planner.firebaseapp.com",
+    databaseURL: "https://server-planner-default-rtdb.firebaseio.com", 
+    projectId: "server-planner",
+    storageBucket: "server-planner.firebasestorage.app",
+    messagingSenderId: "27100250455", // Pre-filled with your Project Number!
+    appId: "YOUR_APP_ID" // Retrieve this from your Firebase Console
+};
+
 
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
